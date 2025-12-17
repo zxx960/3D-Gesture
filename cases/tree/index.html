@@ -1480,20 +1480,11 @@
       const ringClosed = adjustedY(ringTip) > adjustedY(ringPip) * 1.1;
       const pinkyClosed = adjustedY(pinkyTip) > adjustedY(pinkyPip) * 1.1;
       
-      // 食指弯曲度检查（确保食指伸直）
-      const indexStraightness = Math.abs(adjustedY(indexTip) - adjustedY(indexMcp)) > 
-                               Math.abs(adjustedY(indexPip) - adjustedY(indexMcp)) * 1.5;
+      // 计算捏合距离（拇指和食指之间的距离）
+      const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
       
-      // 拇指位置检查（数字1手势拇指可以弯曲）
-      const thumbNearIndex = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y) < 0.15;
-      
-      // 数字1手势判断（更严格的条件）
-      const isGestureOne = indexExtended && 
-                          middleClosed && 
-                          ringClosed && 
-                          pinkyClosed &&
-                          indexStraightness &&
-                          thumbNearIndex;
+      // 捏合手势判断（拇指和食指接近）
+      const isPinch = pinchDist < 0.08; // 距离小于0.08认为是捏合
       
       // 计算手掌张开程度
       const palmCenter = { x: (wrist.x + middleMcp.x) / 2, y: (wrist.y + middleMcp.y) / 2 };
@@ -1505,8 +1496,8 @@
       avgOpenDist /= 4;
       
       // 手势判断
-      if (isGestureOne) {
-        return 'ONE';
+      if (isPinch) {
+        return 'PINCH';
       } else if (avgOpenDist < 0.2) {
         return 'FIST';
       } else if (avgOpenDist > 0.35) {
@@ -1543,8 +1534,8 @@
             
             // 执行对应手势的动作
             switch(detectedGesture) {
-              case 'ONE':
-                hint.innerText = "状态: 抓取 / 查看 (数字1手势)";
+              case 'PINCH':
+                hint.innerText = "状态: 抓取 / 查看 (捏合手势)";
                 
                 if (STATE.mode !== 'FOCUS') {
                   const photos = particleSystem.filter(p => p.type === 'PHOTO');
