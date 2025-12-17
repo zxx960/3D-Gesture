@@ -898,7 +898,13 @@
       mode: 'TREE',
       focusTarget: null,
       hand: { detected: false, x: 0, y: 0 },
-      rotation: { x: 0, y: 0 }
+      rotation: { x: 0, y: 0 },
+      gesture: {
+        currentGesture: null,
+        gestureCounter: 0,
+        requiredFrames: 5, // 需要连续5帧确认
+        lastGesture: null
+      }
     };
 
     let scene, camera, renderer, composer;
@@ -1440,83 +1446,155 @@
         }
         requestAnimationFrame(predict);
       }
-
       predict();
+    }
+
+    // 改进的手势识别函数
+    function detectGesture(landmarks) {
+      const lm = landmarks[0];
+      
+      // 计算手掌角度（使用手腕和中指根部的连线）
+      const wrist = lm[0];
+      const middleMcp = lm[9];
+      const palmAngle = Math.atan2(middleMcp.y - wrist.y, middleMcp.x - wrist.x);
+      
+      // 根据手掌角度调整y坐标判断
+      const adjustedY = (point) => {
+        const dx = point.x - wrist.x;
+        const dy = point.y - wrist.y;
+        // 旋转坐标系使手掌垂直
+        const rotatedY = dy * Math.cos(-palmAngle) - dx * Math.sin(-palmAngle);
+        return rotatedY;
+      };
+      
+      // 手指关键点
+      const indexTip = lm[8], indexPip = lm[6], indexMcp = lm[5];
+      const middleTip = lm[12], middlePip = lm[10];
+      const ringTip = lm[16], ringPip = lm[14];
+      const pinkyTip = lm[20], pinkyPip = lm[18];
+      const thumbTip = lm[4], thumbIp = lm[3];
+      
+      // 计算手指伸展程度（使用调整后的y坐标）
+      const indexExtended = adjustedY(indexTip) < adjustedY(indexPip) * 0.9;
+      const middleClosed = adjustedY(middleTip) > adjustedY(middlePip) * 1.1;
+      const ringClosed = adjustedY(ringTip) > adjustedY(ringPip) * 1.1;
+      const pinkyClosed = adjustedY(pinkyTip) > adjustedY(pinkyPip) * 1.1;
+      
+      // 食指弯曲度检查（确保食指伸直）
+      const indexStraightness = Math.abs(adjustedY(indexTip) - adjustedY(indexMcp)) > 
+                               Math.abs(adjustedY(indexPip) - adjustedY(indexMcp)) * 1.5;
+      
+      // 拇指位置检查（数字1手势拇指可以弯曲）
+      const thumbNearIndex = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y) < 0.15;
+      
+      // 数字1手势判断（更严格的条件）
+      const isGestureOne = indexExtended && 
+                          middleClosed && 
+                          ringClosed && 
+                          pinkyClosed &&
+                          indexStraightness &&
+                          thumbNearIndex;
+      
+      // 计算手掌张开程度
+      const palmCenter = { x: (wrist.x + middleMcp.x) / 2, y: (wrist.y + middleMcp.y) / 2 };
+      const fingerTips = [indexTip, middleTip, ringTip, pinkyTip];
+      let avgOpenDist = 0;
+      fingerTips.forEach(tip => {
+        avgOpenDist += Math.hypot(tip.x - palmCenter.x, tip.y - palmCenter.y);
+      });
+      avgOpenDist /= 4;
+      
+      // 手势判断
+      if (isGestureOne) {
+        return 'ONE';
+      } else if (avgOpenDist < 0.2) {
+        return 'FIST';
+      } else if (avgOpenDist > 0.35) {
+        return 'OPEN';
+      }
+      
+      return 'UNKNOWN';
     }
 
     function processGestures(result) {
       const hint = document.getElementById('gesture-hint');
-
+      
       if (result.landmarks && result.landmarks.length > 0) {
         STATE.hand.detected = true;
         const lm = result.landmarks[0];
         STATE.hand.x = (lm[9].x - 0.5) * 2;
         STATE.hand.y = (lm[9].y - 0.5) * 2;
-
-        const thumb = lm[4];
-        const index = lm[8];
-        const wrist = lm[0];
-        const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
-        const tips = [lm[8], lm[12], lm[16], lm[20]];
-        let openDist = 0;
-        tips.forEach(t => openDist += Math.hypot(t.x - wrist.x, t.y - wrist.y));
-        openDist /= 4;
-
-        // 数字1手势判断 (只伸出食指)
-        const indexTip = lm[8], indexPip = lm[6];
-        const middleTip = lm[12], middlePip = lm[10];
-        const ringTip = lm[16], ringPip = lm[14];
-        const pinkyTip = lm[20], pinkyPip = lm[18];
-
-        const indexOpen = indexTip.y < indexPip.y;
-        const middleClosed = middleTip.y > middlePip.y;
-        const ringClosed = ringTip.y > ringPip.y;
-        const pinkyClosed = pinkyTip.y > pinkyPip.y;
-        const isGestureOne = indexOpen && middleClosed && ringClosed && pinkyClosed;
-
-        // 数字1手势 (抓取照片)
-        if (isGestureOne) {
-          hint.innerText = "状态: 抓取 / 查看 (数字1手势)";
-
-          if (STATE.mode !== 'FOCUS') {
-            const photos = particleSystem.filter(p => p.type === 'PHOTO');
-            let closestPhoto = null;
-            let minScreenDist = Infinity;
-
-            photos.forEach(p => {
-              p.mesh.updateMatrixWorld();
-              const pos = new THREE.Vector3();
-              p.mesh.getWorldPosition(pos);
-              const screenPos = pos.project(camera);
-
-              const dist = Math.hypot(screenPos.x, screenPos.y);
-
-              if (screenPos.z < 1 && dist < CONFIG.interaction.grabRadius && dist < minScreenDist) {
-                minScreenDist = dist;
-                closestPhoto = p.mesh;
-              }
-            });
-
-            if (closestPhoto) {
-              STATE.mode = 'FOCUS';
-              STATE.focusTarget = closestPhoto;
+        
+        // 检测当前手势
+        const detectedGesture = detectGesture(result.landmarks);
+        
+        // 连续帧确认机制
+        if (detectedGesture === STATE.gesture.currentGesture) {
+          STATE.gesture.gestureCounter++;
+        } else {
+          STATE.gesture.currentGesture = detectedGesture;
+          STATE.gesture.gestureCounter = 1;
+        }
+        
+        // 只有连续检测到足够帧数才执行动作
+        if (STATE.gesture.gestureCounter >= STATE.gesture.requiredFrames) {
+          if (detectedGesture !== STATE.gesture.lastGesture) {
+            STATE.gesture.lastGesture = detectedGesture;
+            
+            // 执行对应手势的动作
+            switch(detectedGesture) {
+              case 'ONE':
+                hint.innerText = "状态: 抓取 / 查看 (数字1手势)";
+                
+                if (STATE.mode !== 'FOCUS') {
+                  const photos = particleSystem.filter(p => p.type === 'PHOTO');
+                  let closestPhoto = null;
+                  let minScreenDist = Infinity;
+                  
+                  photos.forEach(p => {
+                    p.mesh.updateMatrixWorld();
+                    const pos = new THREE.Vector3();
+                    p.mesh.getWorldPosition(pos);
+                    const screenPos = pos.project(camera);
+                    
+                    const dist = Math.hypot(screenPos.x, screenPos.y);
+                    
+                    if (screenPos.z < 1 && dist < CONFIG.interaction.grabRadius && dist < minScreenDist) {
+                      minScreenDist = dist;
+                      closestPhoto = p.mesh;
+                    }
+                  });
+                  
+                  if (closestPhoto) {
+                    STATE.mode = 'FOCUS';
+                    STATE.focusTarget = closestPhoto;
+                  }
+                }
+                break;
+                
+              case 'FIST':
+                STATE.mode = 'TREE';
+                STATE.focusTarget = null;
+                hint.innerText = "状态: 聚合 (圣诞树)";
+                break;
+                
+              case 'OPEN':
+                STATE.mode = 'SCATTER';
+                STATE.focusTarget = null;
+                hint.innerText = "状态: 散开 (移动手至边缘旋转)";
+                break;
             }
           }
-        }
-        // 握拳 (聚合成树)
-        else if (openDist < 0.25) {
-          STATE.mode = 'TREE';
-          STATE.focusTarget = null;
-          hint.innerText = "状态: 聚合 (圣诞树)";
-        }
-        // 张开手掌 (散开)
-        else if (openDist > 0.4) {
-          STATE.mode = 'SCATTER';
-          STATE.focusTarget = null;
-          hint.innerText = "状态: 散开 (移动手至边缘旋转)";
+        } else {
+          // 显示正在检测的状态
+          if (detectedGesture !== 'UNKNOWN' && detectedGesture !== STATE.gesture.lastGesture) {
+            hint.innerText = `检测到: ${detectedGesture} (${STATE.gesture.gestureCounter}/${STATE.gesture.requiredFrames})`;
+          }
         }
       } else {
         STATE.hand.detected = false;
+        STATE.gesture.currentGesture = null;
+        STATE.gesture.gestureCounter = 0;
         hint.innerText = "等待手势... (或按 1/2 键切换)";
       }
     }
@@ -1567,7 +1645,6 @@
     // 页面加载后启动
     init();
   </script>
-
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm/vision_wasm_internal.js"
     crossorigin="anonymous"></script>
