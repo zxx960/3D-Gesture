@@ -1220,23 +1220,13 @@
     }
 
     function createDefaultPhotos() {
-      const canvas = document.createElement('canvas');
-      canvas.width = 512;
-      canvas.height = 512;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#050505';
-      ctx.fillRect(0, 0, 512, 512);
-      ctx.strokeStyle = '#eebb66';
-      ctx.lineWidth = 15;
-      ctx.strokeRect(20, 20, 472, 472);
-      ctx.font = '500 60px Times New Roman';
-      ctx.fillStyle = '#eebb66';
-      ctx.textAlign = 'center';
-      ctx.fillText("JOYEUX", 256, 230);
-      ctx.fillText("NOEL", 256, 300);
-
-      const tex = new THREE.CanvasTexture(canvas);
-      addPhotoToScene(tex);
+      const img = new Image();
+      img.onload = function() {
+        const tex = new THREE.Texture(img);
+        tex.needsUpdate = true;
+        addPhotoToScene(tex);
+      };
+      img.src = 'images/by_20180605174346727.jpg';
     }
 
     function addPhotoToScene(texture) {
