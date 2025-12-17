@@ -1319,9 +1319,21 @@
                 tips.forEach(t => openDist += Math.hypot(t.x - wrist.x, t.y - wrist.y)); 
                 openDist /= 4;
 
-                // 捏合 (抓取照片)
-                if (pinchDist < 0.05) {
-                    hint.innerText = "状态: 抓取 / 查看";
+                // 数字1手势判断 (只伸出食指)
+                const indexTip = lm[8], indexPip = lm[6];
+                const middleTip = lm[12], middlePip = lm[10];
+                const ringTip = lm[16], ringPip = lm[14];
+                const pinkyTip = lm[20], pinkyPip = lm[18];
+                
+                const indexOpen = indexTip.y < indexPip.y;
+                const middleClosed = middleTip.y > middlePip.y;
+                const ringClosed = ringTip.y > ringPip.y;
+                const pinkyClosed = pinkyTip.y > pinkyPip.y;
+                const isGestureOne = indexOpen && middleClosed && ringClosed && pinkyClosed;
+                
+                // 数字1手势 (抓取照片)
+                if (isGestureOne) {
+                    hint.innerText = "状态: 抓取 / 查看 (数字1手势)";
                     
                     if (STATE.mode !== 'FOCUS') {
                         const photos = particleSystem.filter(p => p.type === 'PHOTO');
