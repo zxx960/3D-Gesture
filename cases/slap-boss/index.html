@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>暴打老板 - 减压神器</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #222; font-family: 'Segoe UI', sans-serif; }
+        #game-container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        
+        /* 老板区域 */
+        #boss-container { 
+            position: relative; 
+            width: 400px; 
+            height: 500px; 
+            transition: transform 0.1s;
+        }
+        #boss-img { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: contain; 
+            pointer-events: none;
+            filter: drop-shadow(0 0 10px rgba(0,0,0,0.5));
+        }
+        
+        /* 摄像头预览（镜像） */
+        #video-container { 
+            position: absolute; 
+            bottom: 20px; 
+            right: 20px; 
+            width: 240px; 
+            height: 180px; 
+            z-index: 10; 
+            border: 3px solid rgba(255,255,255,0.3); 
+            border-radius: 12px; 
+            overflow: hidden; 
+            background: #000;
+        }
+        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+
+        /* UI */
+        #ui-layer { position: absolute; top: 20px; left: 20px; color: white; z-index: 20; }
+        .control-panel { background: rgba(0,0,0,0.6); padding: 15px; border-radius: 8px; }
+        button { cursor: pointer; padding: 8px 16px; background: #ff4757; color: white; border: none; border-radius: 4px; font-size: 14px; }
+        button:hover { background: #ff6b81; }
+        input[type="file"] { display: none; }
+        
+        /* 提示文字 */
+        #instruction {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #fff;
+            font-size: 24px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+            z-index: 100;
+            text-align: center;
+        }
+
+        /* 打击特效文字 */
+        .hit-effect {
+            position: absolute;
+            font-size: 60px;
+            font-weight: bold;
+            color: #ff0;
+            text-shadow: 2px 2px 0 #f00;
+            pointer-events: none;
+            animation: pop 0.5s ease-out forwards;
+            z-index: 50;
+        }
+        @keyframes pop {
+            0% { transform: scale(0.5) rotate(0deg); opacity: 1; }
+            50% { transform: scale(1.5) rotate(-10deg); }
+            100% { transform: scale(1.2) rotate(10deg); opacity: 0; }
+        }
+
+        /* 鼻子和脸颊判定区调试框 (设为透明) */
+        .hit-box { position: absolute; border: 2px solid rgba(255,0,0,0.0); border-radius: 50%; }
+        #nose-box { top: 40%; left: 40%; width: 20%; height: 20%; }
+        #left-cheek { top: 40%; left: 10%; width: 25%; height: 30%; }
+        #right-cheek { top: 40%; right: 10%; width: 25%; height: 30%; }
+
+        #loading {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); color: white; display: flex;
+            justify-content: center; align-items: center; font-size: 24px; z-index: 999;
+        }
+    </style>
+    <!-- MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <div id="loading">正在加载AI模型...请稍候</div>
+
+    <div id="ui-layer">
+        <div class="control-panel">
+            <h3>暴打老板模拟器</h3>
+            <p>👋 张开手掌 = 扇耳光</p>
+            <p>✊ 握紧拳头 = 打鼻子</p>
+            <br>
+            <button onclick="document.getElementById('file-input').click()">上传老板照片</button>
+            <input type="file" id="file-input" accept="image/*" onchange="loadUserImage(this)">
+        </div>
+    </div>
+
+    <div id="instruction">准备好你的双手！</div>
+
+    <div id="game-container">
+        <div id="boss-container">
+            <!-- 默认是一个简单的SVG脸 -->
+            <svg id="default-boss" viewBox="0 0 200 250" width="100%" height="100%">
+                <g stroke="black" stroke-width="2" fill="#ffccaa">
+                    <!-- 脸 -->
+                    <ellipse cx="100" cy="100" rx="80" ry="100" />
+                    <!-- 眼睛 -->
+                    <circle cx="70" cy="80" r="10" fill="white" />
+                    <circle cx="70" cy="80" r="3" fill="black" />
+                    <circle cx="130" cy="80" r="10" fill="white" />
+                    <circle cx="130" cy="80" r="3" fill="black" />
+                    <!-- 眉毛 -->
+                    <line x1="50" y1="60" x2="90" y2="70" stroke-width="3" />
+                    <line x1="150" y1="60" x2="110" y2="70" stroke-width="3" />
+                    <!-- 鼻子 -->
+                    <path d="M100,90 Q90,120 100,130" fill="none" stroke-width="3"/>
+                    <!-- 嘴巴 -->
+                    <path d="M70,150 Q100,180 130,150" fill="none" stroke-width="3" />
+                </g>
+                <!-- 身体 -->
+                <path d="M20,250 Q100,200 180,250" fill="#333" stroke="none"/>
+                <!-- 领带 -->
+                <path d="M100,200 L90,250 L110,250 Z" fill="red" />
+            </svg>
+            <img id="boss-img" style="display:none;" />
+            
+            <!-- 判定区 -->
+            <div id="nose-box" class="hit-box"></div>
+            <div id="left-cheek" class="hit-box"></div>
+            <div id="right-cheek" class="hit-box"></div>
+        </div>
+    </div>
+
+    <div id="video-container">
+        <video id="input-video"></video>
+        <canvas id="output-canvas" width="320" height="240" style="position:absolute; top:0; left:0; width:100%; height:100%; transform: scaleX(-1);"></canvas>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('input-video');
+        const canvasElement = document.getElementById('output-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const bossContainer = document.getElementById('boss-container');
+        const bossImg = document.getElementById('boss-img');
+        const defaultBoss = document.getElementById('default-boss');
+        const instruction = document.getElementById('instruction');
+
+        // 音效合成器
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'slap') {
+                // 啪！高频噪音/三角波
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.1);
+            } else if (type === 'punch') {
+                // 砰！低频
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.8, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.2);
+            }
+        }
+
+        // 图片上传处理
+        function loadUserImage(input) {
+            if (input.files && input.files[0]) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    bossImg.src = e.target.result;
+                    bossImg.style.display = 'block';
+                    defaultBoss.style.display = 'none';
+                    bossContainer.style.background = 'none'; // 清除可能的背景
+                };
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+
+        // 视觉反馈
+        function showHitEffect(x, y, text) {
+            const el = document.createElement('div');
+            el.className = 'hit-effect';
+            el.innerText = text;
+            
+            // 随机偏移
+            const offsetX = (Math.random() - 0.5) * 50;
+            const offsetY = (Math.random() - 0.5) * 50;
+            
+            // 坐标转换到boss容器内
+            // 简单处理：直接在屏幕坐标显示，或者相对boss
+            // 这里为了简单，直接fixed定位在屏幕上对应位置
+            // 我们还是append到boss-container里比较好定位
+            el.style.left = (x + offsetX) + 'px';
+            el.style.top = (y + offsetY) + 'px';
+            
+            bossContainer.appendChild(el);
+            
+            // 震动效果
+            bossContainer.style.transform = `translate(${Math.random()*20-10}px, ${Math.random()*20-10}px) rotate(${Math.random()*10-5}deg)`;
+            setTimeout(() => {
+                bossContainer.style.transform = 'none';
+            }, 100);
+
+            setTimeout(() => el.remove(), 600);
+        }
+
+        // 状态变量
+        let lastHitTime = 0;
+        const COOLDOWN = 300; // 毫秒
+
+        // 手势检测逻辑
+        function onResults(results) {
+            document.getElementById('loading').style.display = 'none';
+            
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+                    drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 3});
+                    
+                    detectGestureAndHit(landmarks);
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        function detectGestureAndHit(landmarks) {
+            const now = Date.now();
+            if (now - lastHitTime < COOLDOWN) return;
+
+            // 1. 识别手势：拳头 vs 手掌
+            const isFist = checkFist(landmarks);
+            const isPalm = !isFist; // 简单二分
+
+            // 2. 获取关键点位置 (归一化 0-1)
+            // 拳头用中指指关节(9)，手掌用中指指尖(12)或手掌中心(9)
+            // 注意：MediaPipe坐标 x轴 0在左，1在右。但我们显示时做了镜像翻转(scaleX(-1))。
+            // 游戏逻辑中的坐标：屏幕左边是x=0。
+            // 视频流原本是镜像的吗？
+            // 此时 landmarks.x 是基于原始图像的。如果我们在CSS里翻转了video，视觉上是镜面。
+            // 用户的右手在画面右边（镜像后）。
+            // 我们需要把 landmarks 映射到 boss-container 的坐标系。
+            
+            // 取手部中心点 (9号点: MIDDLE_FINGER_MCP)
+            const handX = landmarks[9].x; 
+            const handY = landmarks[9].y;
+
+            // 映射到屏幕坐标
+            // video是镜像的，所以屏幕上的 x = (1 - handX) * screenWidth
+            // 实际上 landmarks.x 对应的是未翻转的图像。
+            // 如果我看屏幕，我的手往右移，画面里的手往右移。
+            // MediaPipe: x increases left to right.
+            // 我们的CSS: transform: scaleX(-1)。这意味着显示是翻转的。
+            // 所以 视觉x = (1 - landmarks.x)
+            
+            const screenX = (1 - handX) * window.innerWidth;
+            const screenY = handY * window.innerHeight;
+
+            // 获取 Boss 的位置矩形
+            const bossRect = bossContainer.getBoundingClientRect();
+            
+            // 检查是否在 Boss 区域内
+            if (screenX > bossRect.left && screenX < bossRect.right &&
+                screenY > bossRect.top && screenY < bossRect.bottom) {
+                
+                // 相对 Boss 的坐标
+                const relX = screenX - bossRect.left;
+                const relY = screenY - bossRect.top;
+                
+                // 归一化相对坐标 (0-1)
+                const nX = relX / bossRect.width;
+                const nY = relY / bossRect.height;
+
+                // 判定区域 (参考 CSS 设置)
+                // 鼻子: left 40-60%, top 40-60%
+                // 左脸: left 10-35%, top 40-70%
+                // 右脸: left 65-90%, top 40-70%
+                
+                // 拳头 -> 鼻子
+                if (isFist) {
+                    if (nX > 0.3 && nX < 0.7 && nY > 0.3 && nY < 0.7) {
+                        triggerHit('punch', relX, relY);
+                    }
+                }
+                // 巴掌 -> 脸颊
+                else {
+                    // 只要在脸部区域就算
+                    if (nY > 0.2 && nY < 0.8) {
+                        if (nX < 0.4) {
+                            triggerHit('slap', relX, relY, 'Left');
+                        } else if (nX > 0.6) {
+                            triggerHit('slap', relX, relY, 'Right');
+                        } else if (nX >= 0.4 && nX <= 0.6) {
+                            // 中间也可以扇
+                            triggerHit('slap', relX, relY);
+                        }
+                    }
+                }
+            }
+        }
+
+        function checkFist(landmarks) {
+            // 简单判断：指尖是否都在掌心附近
+            // 对比 指尖(TIP) 和 指根(MCP) 的距离，或者 Y 坐标
+            // 拳头：所有手指弯曲。
+            // 指尖(8,12,16,20) y > 指根(5,9,13,17) y (假设手向上)
+            // 更通用的：指尖到手腕(0)的距离 < 指根到手腕的距离
+            
+            const tips = [8, 12, 16, 20];
+            const mcps = [5, 9, 13, 17];
+            let foldedCount = 0;
+            
+            // 手腕
+            const wrist = landmarks[0];
+
+            for (let i = 0; i < 4; i++) {
+                const dTip = dist(landmarks[tips[i]], wrist);
+                const dMcp = dist(landmarks[mcps[i]], wrist);
+                if (dTip < dMcp * 1.2) { // 稍微放宽一点
+                    foldedCount++;
+                }
+            }
+            
+            return foldedCount >= 3; // 至少3根手指弯曲算拳头
+        }
+
+        function dist(p1, p2) {
+            return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+        }
+
+        function triggerHit(type, x, y, side) {
+            lastHitTime = Date.now();
+            playSound(type);
+            
+            let text = "";
+            if (type === 'punch') text = "💥 暴击!";
+            else text = "👋 啪!";
+
+            showHitEffect(x, y, text);
+        }
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 320,
+            height: 240
+        });
+        camera.start();
+
+        // 默认图片提示
+        instruction.innerText = "上传老板照片，或者直接开打！\n🖐️扇脸  ✊打鼻";
+        setTimeout(() => {
+            instruction.style.opacity = 0.5;
+            instruction.style.fontSize = "16px";
+        }, 5000);
+
+    </script>
+</body>
+</html>
