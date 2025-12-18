@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gesture Love Particles</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #video-container { position: absolute; bottom: 20px; left: 20px; width: 320px; height: 240px; z-index: 2; border: 2px solid rgba(255,255,255,0.3); border-radius: 10px; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-family: sans-serif; font-size: 24px; z-index: 10; pointer-events: none; }
+    </style>
+    <!-- Import Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Import MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <div id="loading">Loading models...</div>
+    <div id="canvas-container"></div>
+    <div id="video-container">
+        <video id="input-video"></video>
+    </div>
+
+    <script>
+        // --- Configuration ---
+        const PARTICLE_COUNT = 3000;
+        const PARTICLE_SIZE = 0.15; // Decreased size for better definition
+        const TEXT_COLOR = 0xff69b4; // Hot pink for "Love" vibe
+        const CANVAS_WIDTH = 1000; // Virtual canvas size for text sampling
+        const CANVAS_HEIGHT = 500;
+
+        // --- Three.js Setup ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 20;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(renderer.domElement);
+
+        // --- Particle System ---
+        const particlesGeometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(PARTICLE_COUNT * 3);
+        const targetPositions = new Float32Array(PARTICLE_COUNT * 3);
+        
+        // Initialize random positions
+        for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+            positions[i] = (Math.random() - 0.5) * 100;
+            targetPositions[i] = positions[i];
+        }
+
+        particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+        const particlesMaterial = new THREE.PointsMaterial({
+            color: TEXT_COLOR,
+            size: PARTICLE_SIZE,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending
+        });
+
+        const particleSystem = new THREE.Points(particlesGeometry, particlesMaterial);
+        scene.add(particleSystem);
+
+        // --- Text/Shape Generation ---
+        function getPointsFromText(text) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = CANVAS_WIDTH;
+            canvas.height = CANVAS_HEIGHT;
+
+            // Background must be black
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Text settings
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Adjust font size based on text length
+            const fontSize = text.length > 5 ? 100 : 300;
+            ctx.font = `bold ${fontSize}px Arial`;
+            
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            const validPoints = [];
+
+            // Randomly sample points from white pixels
+            for (let y = 0; y < canvas.height; y += 4) {
+                for (let x = 0; x < canvas.width; x += 4) {
+                    const index = (y * canvas.width + x) * 4;
+                    // Check if pixel is light enough
+                    if (data[index] > 128) {
+                        // Map 2D canvas coordinates to 3D world coordinates
+                        // Center is (0,0)
+                        const posX = (x - canvas.width / 2) * 0.05;
+                        const posY = -(y - canvas.height / 2) * 0.05; // Invert Y
+                        validPoints.push({ x: posX, y: posY, z: 0 });
+                    }
+                }
+            }
+            return validPoints;
+        }
+
+        let currentShapePoints = [];
+        
+        function updateTargetShape(text) {
+            const points = getPointsFromText(text);
+            currentShapePoints = points;
+            
+            // Update target positions for particles
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                if (points.length > 0) {
+                    // If we have points, assign them. 
+                    // If particles > points, wrap around or random assignment
+                    const ptIndex = i % points.length;
+                    targetPositions[i3] = points[ptIndex].x;
+                    targetPositions[i3 + 1] = points[ptIndex].y;
+                    targetPositions[i3 + 2] = points[ptIndex].z;
+                } else {
+                    // Scatter if no text
+                    targetPositions[i3] = (Math.random() - 0.5) * 50;
+                    targetPositions[i3 + 1] = (Math.random() - 0.5) * 50;
+                    targetPositions[i3 + 2] = (Math.random() - 0.5) * 50;
+                }
+            }
+        }
+
+        // Initialize with "0" or empty
+        updateTargetShape("Start");
+
+        // --- Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const positions = particleSystem.geometry.attributes.position.array;
+            
+            // Lerp particles towards targets
+            for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+                positions[i] += (targetPositions[i] - positions[i]) * 0.1;
+            }
+            
+            particleSystem.geometry.attributes.position.needsUpdate = true;
+            
+            // Gentle rotation
+            particleSystem.rotation.y += 0.002;
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- Resize Handler ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- MediaPipe Hands ---
+        const videoElement = document.getElementById('input-video');
+        const loadingElement = document.getElementById('loading');
+        let activeFingers = 0;
+        let lastFingers = -1;
+
+        function countFingers(landmarks) {
+            // Finger tip and dip/pip indices
+            // Thumb: 4, Index: 8, Middle: 12, Ring: 16, Pinky: 20
+            // We compare tip y with pip y (except thumb)
+            // Note: In MediaPipe, y increases downwards.
+            
+            let count = 0;
+
+            // Thumb (compare x for thumb, assuming right hand or adjust logic)
+            // A simple heuristic for thumb is checking if tip is 'extended' away from palm
+            // For simplicity, let's use a standard vector approach or relative position
+            // Checking if tip.x is further from pinky than ip.x
+            
+            // Generic openness check: distance from wrist (0)
+            // Or just y comparison for non-thumb fingers (works well for upright hand)
+            
+            const tips = [8, 12, 16, 20];
+            const pips = [6, 10, 14, 18]; // PIP joints
+
+            // Thumb is tricky. Let's try: if tip is to the left/right of IP joint depending on hand
+            // Simple check: Tip of thumb (4) distance to Index Base (5) vs IP (3) distance to Index Base (5)
+            // Or just check if thumb tip is far from palm center.
+            
+            // Let's use the standard "is finger extended" logic
+            
+            // Thumb
+            // We need to know handedness (MultiHandedness) but landmarks is just points.
+            // Simplified: check if thumb tip (4) x is outside of MCP (2).
+            // Actually, for a simple demo, let's assume vertical hand.
+            
+            // Thumb: compare x of tip(4) and ip(3). If |x4 - x_center| > |x3 - x_center|?
+            // Let's just use y for 4 fingers first.
+            
+            // Non-thumb fingers
+            for (let i = 0; i < 4; i++) {
+                if (landmarks[tips[i]].y < landmarks[pips[i]].y) {
+                    count++;
+                }
+            }
+
+            // Thumb
+            // Check if thumb tip (4) is to the side of the knuckle (2)
+            // This is relative to hand direction. 
+            // Simple hack: if thumb tip is above the MCP joint (y comparison) like others?
+            // Usually thumb is sideways. 
+            // Let's try: if distance(4, 17) > distance(3, 17) (distance to pinky base)
+            const dTip = Math.hypot(landmarks[4].x - landmarks[17].x, landmarks[4].y - landmarks[17].y);
+            const dIp = Math.hypot(landmarks[3].x - landmarks[17].x, landmarks[3].y - landmarks[17].y);
+            if (dTip > dIp) count++;
+
+            return count;
+        }
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults((results) => {
+            loadingElement.style.display = 'none';
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const fingers = countFingers(landmarks);
+                
+                if (fingers !== lastFingers) {
+                    lastFingers = fingers;
+                    console.log("Fingers detected:", fingers);
+                    
+                    let text = "";
+                    if (fingers === 0) text = "";
+                    else if (fingers === 1) text = "1";
+                    else if (fingers === 2) text = "2";
+                    else if (fingers === 3) text = "3";
+                    else if (fingers === 4) text = "4";
+                    else if (fingers >= 5) text = "I LOVE YOU";
+                    
+                    updateTargetShape(text);
+                }
+            } else {
+                 // No hands detected
+                 // Optional: Reset or keep last state?
+                 // updateTargetShape("Show Hand");
+            }
+        });
+
+        // Camera setup
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 320,
+            height: 240
+        });
+        cameraUtils.start();
+
+    </script>
+</body>
+</html>
