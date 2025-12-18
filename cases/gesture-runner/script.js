@@ -129,24 +129,15 @@ function onWindowResize() {
 }
 
 function updatePlayerPosition() {
-    // Map hand position (0-1) to lanes (-laneWidth, 0, laneWidth)
-    // 0.0 - 0.33 -> Left
-    // 0.33 - 0.66 -> Center
-    // 0.66 - 1.0 -> Right
+    // Map hand position (0-1) directly to X coordinate continuously
+    // Center (0.5) -> 0
+    // Range roughly -6 to 6 to cover the whole track width
+    const range = 6; 
+    let targetX = (handX - 0.5) * 2 * range;
     
-    // Smooth Lerp for visual effect
-    let targetX = 0;
-    
-    if (handX < 0.4) {
-        targetX = -laneWidth;
-    } else if (handX > 0.6) {
-        targetX = laneWidth;
-    } else {
-        targetX = 0;
-    }
-    
-    // Smooth movement
-    player.position.x += (targetX - player.position.x) * 0.25;
+    // Smooth movement (Lerp)
+    // Higher factor = more responsive
+    player.position.x += (targetX - player.position.x) * 0.2;
 }
 
 const tempPlayerBox = new THREE.Box3();
