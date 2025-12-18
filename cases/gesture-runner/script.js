@@ -10,6 +10,7 @@ let gameState = {
 let scene, camera, renderer;
 let player, ground;
 let obstacles = [];
+let obstacleGeometry, obstacleMaterial; // Reuse these
 const laneWidth = 4;
 const totalLanes = 3; // -1, 0, 1 (Left, Center, Right)
 const pathLength = 100;
@@ -68,6 +69,10 @@ function init() {
     player.castShadow = true;
     scene.add(player);
 
+    // Prepare Obstacle Assets (Reuse to avoid memory leak)
+    obstacleGeometry = new THREE.BoxGeometry(2, 2, 2);
+    obstacleMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
+
     // Initial Obstacles
     spawnInitialObstacles();
 
@@ -97,14 +102,14 @@ function createLaneMarkers() {
 }
 
 function spawnInitialObstacles() {
-    for (let i = 0; i < 10; i++) {
+    // Create a fixed pool of obstacles to recycle
+    for (let i = 0; i < 15; i++) {
         spawnObstacle(-20 - i * 30);
     }
 }
 
 function spawnObstacle(zPos) {
-    const obstacleGeometry = new THREE.BoxGeometry(2, 2, 2);
-    const obstacleMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
+    // Only used for initial setup now
     const obstacle = new THREE.Mesh(obstacleGeometry, obstacleMaterial);
     
     // Random lane (-1, 0, 1)
@@ -141,33 +146,56 @@ function updatePlayerPosition() {
     }
     
     // Smooth movement
-    player.position.x += (targetX - player.position.x) * 0.1;
+    player.position.x += (targetX - player.position.x) * 0.25;
 }
+
+const tempPlayerBox = new THREE.Box3();
+const tempObsBox = new THREE.Box3();
 
 function updateObstacles() {
     if (gameState.isGameOver) return;
 
+    // Find the furthest obstacle to know where to recycle
+    let minZ = 0;
+    for(let obs of obstacles) {
+        if(obs.position.z < minZ) minZ = obs.position.z;
+    }
+
     // Move obstacles towards camera
-    for (let i = obstacles.length - 1; i >= 0; i--) {
+    for (let i = 0; i < obstacles.length; i++) {
         const obs = obstacles[i];
         obs.position.z += gameState.speed;
 
         // Collision detection
-        // Simple AABB collision since boxes are same size and aligned
-        const playerBox = new THREE.Box3().setFromObject(player);
-        const obsBox = new THREE.Box3().setFromObject(obs);
+        // Use shared Box3 objects to avoid garbage collection
+        tempPlayerBox.setFromObject(player);
+        tempObsBox.setFromObject(obs);
         
         // Shrink boxes slightly for forgiving collision
-        playerBox.expandByScalar(-0.2); 
+        tempPlayerBox.expandByScalar(-0.2); 
         
-        if (playerBox.intersectsBox(obsBox)) {
+        if (tempPlayerBox.intersectsBox(tempObsBox)) {
             gameOver();
         }
 
-        // Remove if passed player
+        // Recycle if passed player
         if (obs.position.z > 10) {
-            scene.remove(obs);
-            obstacles.splice(i, 1);
+            // Teleport to the back
+            // Use minZ (current furthest back) - distance
+            // Since everything moved forward by speed, minZ also effectively moved forward.
+            // We want to place it at roughly -300 relative to camera.
+            // But since camera is static (0,0,0) and objects move +z.
+            
+            // Just place it at a fixed distance relative to the furthest one
+            // Or simpler: just place it at -300 if we assume uniform speed/spacing logic holds
+            // Better: Set it to (minZ of OTHER obstacles - 30)
+            
+            // Let's reset it to -450 (15 obstacles * 30 spacing)
+            obs.position.z = -450; 
+            
+            // Randomize lane
+            const lane = Math.floor(Math.random() * 3) - 1;
+            obs.position.x = lane * laneWidth;
             
             // Score up
             gameState.score += 10;
@@ -175,9 +203,6 @@ function updateObstacles() {
             
             // Increase speed slightly
             gameState.speed += 0.005;
-            
-            // Spawn new obstacle
-            spawnObstacle(-100);
         }
     }
 }
