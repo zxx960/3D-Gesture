@@ -246,7 +246,7 @@ const hands = new Hands({locateFile: (file) => {
 
 hands.setOptions({
     maxNumHands: 1,
-    modelComplexity: 1,
+    modelComplexity: 0, // 0: Lite (Faster), 1: Full (More accurate)
     minDetectionConfidence: 0.5,
     minTrackingConfidence: 0.5
 });
