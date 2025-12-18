@@ -49,21 +49,33 @@
         const particlesGeometry = new THREE.BufferGeometry();
         const positions = new Float32Array(PARTICLE_COUNT * 3);
         const targetPositions = new Float32Array(PARTICLE_COUNT * 3);
+        const colors = new Float32Array(PARTICLE_COUNT * 3);
         
-        // Initialize random positions
-        for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+        // Initialize random positions and colors
+        const colorObj = new THREE.Color(TEXT_COLOR);
+        for (let i = 0; i < PARTICLE_COUNT * 3; i+=3) {
             positions[i] = (Math.random() - 0.5) * 100;
+            positions[i+1] = (Math.random() - 0.5) * 100;
+            positions[i+2] = (Math.random() - 0.5) * 100;
+            
             targetPositions[i] = positions[i];
+            targetPositions[i+1] = positions[i+1];
+            targetPositions[i+2] = positions[i+2];
+
+            colors[i] = colorObj.r;
+            colors[i+1] = colorObj.g;
+            colors[i+2] = colorObj.b;
         }
 
         particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        particlesGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
         const particlesMaterial = new THREE.PointsMaterial({
-            color: TEXT_COLOR,
             size: PARTICLE_SIZE,
             transparent: true,
             opacity: 0.8,
-            blending: THREE.AdditiveBlending
+            blending: THREE.AdditiveBlending,
+            vertexColors: true
         });
 
         const particleSystem = new THREE.Points(particlesGeometry, particlesMaterial);
@@ -86,7 +98,7 @@
             ctx.textBaseline = 'middle';
             
             // Adjust font size based on text length
-            const fontSize = text.length > 5 ? 100 : 300;
+            const fontSize = text.length > 5 ? 80 : 300; // Smaller font for "I LOVE YOU" to fit
             ctx.font = `bold ${fontSize}px Arial`;
             
             ctx.fillText(text, canvas.width / 2, canvas.height / 2);
@@ -112,12 +124,39 @@
             return validPoints;
         }
 
-        let currentShapePoints = [];
+        let isLoveMode = false;
+
+        function explodeParticles() {
+            for (let i = 0; i < PARTICLE_COUNT * 3; i+=3) {
+                targetPositions[i] = (Math.random() - 0.5) * 300; // Explode outwards
+                targetPositions[i+1] = (Math.random() - 0.5) * 300;
+                targetPositions[i+2] = (Math.random() - 0.5) * 300;
+            }
+        }
         
         function updateTargetShape(text) {
-            const points = getPointsFromText(text);
-            currentShapePoints = points;
+            const isLove = text === "I LOVE YOU";
             
+            if (isLove && !isLoveMode) {
+                // Trigger explosion first
+                explodeParticles();
+                isLoveMode = true;
+                
+                // Then form text after a delay
+                setTimeout(() => {
+                    formTextShape(text, true);
+                }, 400);
+            } else {
+                if (!isLove) isLoveMode = false;
+                formTextShape(text, isLove);
+            }
+        }
+
+        function formTextShape(text, colorful) {
+            const points = getPointsFromText(text);
+            const colorsAttr = particleSystem.geometry.attributes.color;
+            const baseColor = new THREE.Color(TEXT_COLOR);
+
             // Update target positions for particles
             for (let i = 0; i < PARTICLE_COUNT; i++) {
                 const i3 = i * 3;
@@ -128,6 +167,21 @@
                     targetPositions[i3] = points[ptIndex].x;
                     targetPositions[i3 + 1] = points[ptIndex].y;
                     targetPositions[i3 + 2] = points[ptIndex].z;
+                    
+                    // Color updates
+                    if (colorful) {
+                        // Rainbow / Gradient colors for LOVE
+                        const hue = (targetPositions[i3] + 25) / 50; // Map x position to hue
+                        const color = new THREE.Color().setHSL(Math.abs(hue % 1), 1.0, 0.6);
+                        colorsAttr.array[i3] = color.r;
+                        colorsAttr.array[i3+1] = color.g;
+                        colorsAttr.array[i3+2] = color.b;
+                    } else {
+                        colorsAttr.array[i3] = baseColor.r;
+                        colorsAttr.array[i3+1] = baseColor.g;
+                        colorsAttr.array[i3+2] = baseColor.b;
+                    }
+
                 } else {
                     // Scatter if no text
                     targetPositions[i3] = (Math.random() - 0.5) * 50;
@@ -135,6 +189,7 @@
                     targetPositions[i3 + 2] = (Math.random() - 0.5) * 50;
                 }
             }
+            colorsAttr.needsUpdate = true;
         }
 
         // Initialize with "0" or empty
@@ -147,14 +202,24 @@
             const positions = particleSystem.geometry.attributes.position.array;
             
             // Lerp particles towards targets
+            // Use different speed for explosion vs formation could be nice, but constant is simple
             for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
                 positions[i] += (targetPositions[i] - positions[i]) * 0.1;
             }
             
             particleSystem.geometry.attributes.position.needsUpdate = true;
             
-            // Gentle rotation
-            particleSystem.rotation.y += 0.002;
+            // Heartbeat effect for Love Mode
+            if (isLoveMode) {
+                const time = Date.now() * 0.003;
+                const scale = 1 + Math.sin(time * 2) * 0.05 + Math.sin(time * 10) * 0.02; // Complex heartbeat
+                particleSystem.scale.set(scale, scale, scale);
+                particleSystem.rotation.y = Math.sin(time * 0.5) * 0.1; // Gentle sway
+            } else {
+                particleSystem.scale.set(1, 1, 1);
+                // Gentle rotation
+                particleSystem.rotation.y += 0.002;
+            }
 
             renderer.render(scene, camera);
         }
